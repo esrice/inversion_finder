@@ -6,21 +6,28 @@ use std::path::PathBuf;
 use clap::Parser;
 
 use inversion_finder::*;
+use log::{Level, info};
 
 /// Look for inversions in a pangenome graph in GFA format
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
 struct Args {
     /// path to input gfa
-    #[arg(short, long)]
     gfa: PathBuf,
 
-    #[arg(short, long)]
+    /// name of reference path
     ref_path: String,
 }
 
 fn main() {
     let args = Args::parse();
+
+    stderrlog::new()
+        .module(module_path!())
+        .verbosity(Level::Info)
+        .timestamp(stderrlog::Timestamp::Second)
+        .init()
+        .unwrap();
 
     let (segment_lengths, paths) = read_gfa(args.gfa);
 
@@ -40,6 +47,7 @@ fn main() {
     let mut inversions = Vec::<(String, i32, i32)>::new();
     for (query_path_key, query_path) in paths {
         if query_path_key != ref_path_key {
+            info!("Starting alignment of path {}", query_path_key);
             query_path_keys.push(query_path_key.clone());
             let alignments = align_paths(&ref_path, &query_path, &segment_lengths);
 
@@ -75,7 +83,12 @@ fn main() {
     }
 
     println!("ref\tstart\tend\t{}", query_path_keys.join("\t"));
-    for ((start_position, end_position), paths) in inversions_collated {
+    let mut keys: Vec<&(i32, i32)> = inversions_collated.keys().collect();
+    keys.sort_by_key(|k| k.0);
+    for (start_position, end_position) in keys {
+        let paths = inversions_collated
+            .get(&(*start_position, *end_position))
+            .unwrap();
         let mut calls = Vec::<i8>::new();
         for query_path_key in &query_path_keys {
             if paths.contains(query_path_key) {

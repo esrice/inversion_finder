@@ -5,6 +5,8 @@ edition = "2024"
 
 [dependencies]
 clap = { version = "4.5.35", features = ["derive"] }
+log = "0.4.27"
 ndarray = "0.16.1"
 ndarray-stats = "0.6.0"
 regex = "1.11.1"
+stderrlog = "0.6.0"

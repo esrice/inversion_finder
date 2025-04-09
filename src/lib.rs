@@ -1,3 +1,4 @@
+use log::{debug, info, warn};
 use ndarray::{Array, Array2};
 use ndarray_stats::QuantileExt;
 use regex::Regex;
@@ -20,7 +21,10 @@ pub fn lookup_base_positions(
 
     let mut current_position = 0;
     for segment in path {
-        let this_segment_length = segment_lengths.get(segment).unwrap();
+        let this_segment_length = match segment_lengths.get(&segment.abs()) {
+            Some(x) => x,
+            None => panic!("{segment} not in segment_lengths!"),
+        };
         if segment_positions.contains_key(segment) {
             segment_positions.insert(
                 *segment,
@@ -110,6 +114,11 @@ pub fn create_matrices(
     path2: &[i32],
     segment_lengths: &HashMap<i32, i32>,
 ) -> (Array2<i32>, Array2<i8>) {
+    debug!(
+        "Allocating score and traceback matrices of size {}x{}",
+        path1.len(),
+        path2.len()
+    );
     let mut score_matrix: Array2<i32> = Array::zeros((path1.len(), path2.len()));
     let mut traceback_matrix: Array2<i8> = Array::zeros((path1.len(), path2.len()));
 
@@ -123,7 +132,7 @@ pub fn create_matrices(
     // fill in the first column
     for i in 1..path1.len() {
         let this_cell_score = if path1[i] == path2[0] {
-            *segment_lengths.get(&path1[i]).unwrap()
+            *segment_lengths.get(&path1[i].abs()).unwrap()
         } else {
             -1
         };
@@ -136,7 +145,7 @@ pub fn create_matrices(
     // fill in the first row
     for j in 1..path2.len() {
         let this_cell_score = if path2[j] == path1[0] {
-            *segment_lengths.get(&path2[j]).unwrap()
+            *segment_lengths.get(&path2[j].abs()).unwrap()
         } else {
             -1
         };
@@ -241,7 +250,8 @@ pub fn align_paths(
 
     let mut alignments = Vec::new();
 
-    for i in 0..path1.len() {
+    let mut i = 0;
+    while i < path1.len() {
         if common_segments.contains(&path1[i].abs()) && !used_segments.contains(&path1[i].abs()) {
             let mut k = i;
             while k < path1.len() && !conflicting_segments.contains(&path1[k].abs()) {
@@ -256,18 +266,33 @@ pub fn align_paths(
             }
             let path2_subproblem = &path2_rev[j..k];
 
-            let (alignment_path1, alignment_path2) =
-                align_paths_subproblem(path1_subproblem, path2_subproblem, segment_lengths);
-            for segment in &alignment_path1 {
-                used_segments.insert(segment.abs());
+            // this is not ideal and I need to use a more intelligent algorithm to save memory:
+            // only keep two rows of the score matrix at a time, and make the traceback matrix
+            // sparse
+            if path1_subproblem.len() < 10000 && path2_subproblem.len() < 10000 {
+                let (alignment_path1, alignment_path2) =
+                    align_paths_subproblem(path1_subproblem, path2_subproblem, segment_lengths);
+                for segment in &alignment_path1 {
+                    used_segments.insert(segment.abs());
+                }
+                for segment in &alignment_path2 {
+                    used_segments.insert(segment.abs());
+                }
+                alignments.push((
+                    alignment_path1,
+                    alignment_path2.iter().rev().map(|x| -1 * x).collect(),
+                ));
+                i += 1;
+            } else {
+                warn!(
+                    "Skipping alignment of s{}-s{} to s{}-s{} because it's too big.",
+                    path1_subproblem[0],
+                    path1_subproblem[path1_subproblem.len() - 1],
+                    path2_subproblem[0],
+                    path2_subproblem[path2_subproblem.len() - 1],
+                );
+                i += path1_subproblem.len()
             }
-            for segment in &alignment_path2 {
-                used_segments.insert(segment.abs());
-            }
-            alignments.push((
-                alignment_path1,
-                alignment_path2.iter().rev().map(|x| -1 * x).collect(),
-            ));
         }
     }
 
