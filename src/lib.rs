@@ -1,4 +1,4 @@
-use ndarray::{Array, Array2, array};
+use ndarray::{Array, Array2};
 use ndarray_stats::QuantileExt;
 use regex::Regex;
 use std::collections::{HashMap, HashSet};
@@ -6,12 +6,30 @@ use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 
-/// A representation of a pangenome graph in GFA format containing only segment lengths and paths
-pub struct Gfa {
-    /// mapping of segment ID to segment length
-    segment_lengths: HashMap<i32, i32>,
-    /// mapping of path ID to list of segments in path
-    paths: HashMap<String, Vec<i32>>,
+pub fn lookup_base_positions(
+    path: &[i32],
+    segment_lengths: &HashMap<i32, i32>,
+    segments: &[i32],
+) -> HashMap<i32, (i32, i32)> {
+    // first, populate the map of segment positions with the segments we actually want to lookup as
+    // keys and dummy values
+    let mut segment_positions: HashMap<i32, (i32, i32)> = HashMap::new();
+    for segment in segments {
+        segment_positions.insert(*segment, (-1, -1));
+    }
+
+    let mut current_position = 0;
+    for segment in path {
+        let this_segment_length = segment_lengths.get(segment).unwrap();
+        if segment_positions.contains_key(segment) {
+            segment_positions.insert(
+                *segment,
+                (current_position + 1, current_position + this_segment_length),
+            );
+        }
+        current_position += this_segment_length;
+    }
+    return segment_positions;
 }
 
 /// Parse the path part of a GFA P-line.
@@ -48,7 +66,7 @@ pub fn parse_gfa_path(path_string: &str) -> Vec<i32> {
 ///
 /// Only keep the information in the GFA that we will need later: the length of each segment, and
 /// the paths.
-pub fn read_gfa(path: PathBuf) -> Gfa {
+pub fn read_gfa(path: PathBuf) -> (HashMap<i32, i32>, HashMap<String, Vec<i32>>) {
     let file = match File::open(&path) {
         Err(why) => panic!("couldn't open {}: {}", path.display(), why),
         Ok(file) => file,
@@ -71,10 +89,7 @@ pub fn read_gfa(path: PathBuf) -> Gfa {
         }
     }
 
-    return Gfa {
-        segment_lengths,
-        paths,
-    };
+    return (segment_lengths, paths);
 }
 
 // This is a janky function that should only be used for finding the max of an array of possible
@@ -118,6 +133,7 @@ pub fn create_matrices(
         traceback_matrix[[i, 0]] = score_argmax(possible_scores);
     }
 
+    // fill in the first row
     for j in 1..path2.len() {
         let this_cell_score = if path2[j] == path1[0] {
             *segment_lengths.get(&path2[j]).unwrap()
@@ -208,19 +224,25 @@ pub fn align_paths(
     path2: &[i32],
     segment_lengths: &HashMap<i32, i32>,
 ) -> Vec<(Vec<i32>, Vec<i32>)> {
+    // reverse-complemented version of path2
     let path2_rev: Vec<i32> = path2.iter().map(|x| -1 * x).rev().collect();
     let path1_set = HashSet::<_>::from_iter(path1.iter().cloned());
     let path2_set = HashSet::<_>::from_iter(path2.iter().cloned());
     let path2_rev_set = HashSet::<_>::from_iter(path2_rev.iter().cloned());
-    let common_segments = HashSet::<_>::from_iter(path1_set.intersection(&path2_rev_set));
+    // all segments traversed in the same direction by path1 and path2
     let conflicting_segments =
         HashSet::<_>::from_iter(path1_set.intersection(&path2_set).map(|x| x.abs()));
+    // all segments traversed in opposite directions by path1 and path2, and NOT also traversed in
+    // the same direction by the two paths somewhere else
+    let intersection =
+        HashSet::<_>::from_iter(path1_set.intersection(&path2_rev_set).map(|x| x.abs()));
+    let common_segments = HashSet::<_>::from_iter(intersection.difference(&conflicting_segments));
     let mut used_segments: HashSet<i32> = HashSet::new();
 
     let mut alignments = Vec::new();
 
     for i in 0..path1.len() {
-        if common_segments.contains(&path1[i]) && !used_segments.contains(&path1[i].abs()) {
+        if common_segments.contains(&path1[i].abs()) && !used_segments.contains(&path1[i].abs()) {
             let mut k = i;
             while k < path1.len() && !conflicting_segments.contains(&path1[k].abs()) {
                 k += 1;
@@ -255,6 +277,7 @@ pub fn align_paths(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ndarray::array;
 
     #[test]
     #[should_panic]
