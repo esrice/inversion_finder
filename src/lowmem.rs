@@ -1,4 +1,4 @@
-use super::{argmax, max};
+use super::{amax, argmax};
 use std::collections::HashMap;
 
 fn max_and_argmax(a: &[i32]) -> (i32, i32) {
@@ -39,7 +39,7 @@ fn initialize_matrices_lowmem(
         };
 
         let possible_scores = [0, -1, -1, score_row_previous[j - 1]];
-        score_row_previous.push(max(&possible_scores) + this_cell_score);
+        score_row_previous.push(amax(&possible_scores) + this_cell_score);
         let traceback_value = argmax(&possible_scores).try_into().unwrap();
         if traceback_value != 0 {
             traceback_matrix.insert((0, j.try_into().unwrap()), traceback_value);
@@ -67,6 +67,7 @@ pub fn align_paths_subproblem_lowmem(
     path1: &[i32],
     path2: &[i32],
     segment_lengths: &HashMap<i32, i32>,
+    drop: usize,
 ) -> (Vec<i32>, Vec<i32>) {
     let (
         mut score_row_previous,
@@ -76,6 +77,12 @@ pub fn align_paths_subproblem_lowmem(
         mut argmax_score,
     ) = initialize_matrices_lowmem(&path1, &path2, &segment_lengths);
 
+    let (max_row_drop, max_col_drop) = if path1.len() > path2.len() {
+        (drop + path1.len() - path2.len(), drop)
+    } else {
+        (drop, drop + path2.len() - path1.len())
+    };
+
     for i in 1..path1.len() {
         // fill in first column of this row
         let this_cell_score = if path1[i] == path2[0] {
@@ -84,7 +91,7 @@ pub fn align_paths_subproblem_lowmem(
             -1
         };
         let possible_scores = [0, -1, score_row_previous[0], -1];
-        score_row_current[0] = max(&possible_scores) + this_cell_score;
+        score_row_current[0] = amax(&possible_scores) + this_cell_score;
         let traceback_value = argmax(&possible_scores).try_into().unwrap();
         if traceback_value != 0 {
             traceback_matrix.insert((i.try_into().unwrap(), 0), traceback_value);
@@ -92,27 +99,33 @@ pub fn align_paths_subproblem_lowmem(
 
         // fill in the rest of this row
         for j in 1..path2.len() {
-            // TODO add a heuristic: if abs(i-j) > cutoff + abs(path1.len()-path2.len())
             let this_cell_score = if path1[i] == path2[j] {
                 *segment_lengths.get(&path1[i].abs()).unwrap()
             } else {
                 -1
             };
 
-            let possible_scores = [
-                0,
-                score_row_previous[j - 1], // come from diagonal
-                score_row_previous[j],     // come from above
-                score_row_current[j - 1],  // come from left
-            ];
+            // heuristic: if we are too far from diagonal, leave traceback as implicit 0 and
+            // calculate score as if we are starting alignment here regardless of what is in
+            // cells nearby
+            if ((i > j) && (i - j > max_row_drop)) || ((j > i) && (j - i > max_col_drop)) {
+                score_row_current[j] = this_cell_score;
+            } else {
+                let possible_scores = [
+                    0,
+                    score_row_previous[j - 1], // come from diagonal
+                    score_row_previous[j],     // come from above
+                    score_row_current[j - 1],  // come from left
+                ];
 
-            score_row_current[j] = max(&possible_scores) + this_cell_score;
-            let traceback_value = argmax(&possible_scores).try_into().unwrap();
-            if traceback_value != 0 {
-                traceback_matrix.insert(
-                    (i.try_into().unwrap(), j.try_into().unwrap()),
-                    traceback_value,
-                );
+                score_row_current[j] = amax(&possible_scores) + this_cell_score;
+                let traceback_value = argmax(&possible_scores).try_into().unwrap();
+                if traceback_value != 0 {
+                    traceback_matrix.insert(
+                        (i.try_into().unwrap(), j.try_into().unwrap()),
+                        traceback_value,
+                    );
+                }
             }
         }
         // update max/argmax of score matrix
@@ -179,7 +192,7 @@ mod tests {
             segment_lengths.insert(i, 100);
         }
         let (path1_alignment, path2_alignment) =
-            align_paths_subproblem_lowmem(&path1, &path2, &segment_lengths);
+            align_paths_subproblem_lowmem(&path1, &path2, &segment_lengths, 100);
         assert_eq!(path1_alignment, vec![2, 3, 4, -5]);
         assert_eq!(path2_alignment, vec![2, 7, -5]);
     }

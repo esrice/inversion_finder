@@ -1,9 +1,9 @@
-use log::{debug, warn};
+use log::info;
 use ndarray::{Array, Array2};
 use ndarray_stats::QuantileExt;
 use std::collections::{HashMap, HashSet};
 
-use super::{argmax, max};
+use super::{amax, argmax, lowmem};
 
 /// Create alignment matrices with edges filled.
 ///
@@ -18,16 +18,11 @@ use super::{argmax, max};
 /// * `traceback_matrix`: a DP alignment matrix for traceback with first row and column filled.
 ///   Values: 0 => alignment starts here, 1 => alignment comes from diagonal, 2 => alignment comes
 ///   from above, 3 => alignment comes from left
-pub fn create_matrices(
+fn create_matrices(
     path1: &[i32],
     path2: &[i32],
     segment_lengths: &HashMap<i32, i32>,
 ) -> (Array2<i32>, Array2<i8>) {
-    debug!(
-        "Allocating score and traceback matrices of size {}x{}",
-        path1.len(),
-        path2.len()
-    );
     let mut score_matrix: Array2<i32> = Array::zeros((path1.len(), path2.len()));
     let mut traceback_matrix: Array2<i8> = Array::zeros((path1.len(), path2.len()));
 
@@ -47,7 +42,7 @@ pub fn create_matrices(
         };
 
         let possible_scores = [0, -1, score_matrix[[i - 1, 0]], -1];
-        score_matrix[[i, 0]] = max(&possible_scores) + this_cell_score;
+        score_matrix[[i, 0]] = amax(&possible_scores) + this_cell_score;
         traceback_matrix[[i, 0]] = argmax(&possible_scores).try_into().unwrap();
     }
 
@@ -60,7 +55,7 @@ pub fn create_matrices(
         };
 
         let possible_scores = [0, -1, -1, score_matrix[[0, j - 1]]];
-        score_matrix[[0, j]] = max(&possible_scores) + this_cell_score;
+        score_matrix[[0, j]] = amax(&possible_scores) + this_cell_score;
         traceback_matrix[[0, j]] = argmax(&possible_scores).try_into().unwrap();
     }
 
@@ -71,6 +66,15 @@ pub fn create_matrices(
 ///
 /// An alignment subproblem is one where neither of the paths contains a segment that is present in
 /// opposite orientations in the two paths.
+///
+/// # Arguments
+///
+/// * `path1` and `path2`: paths to align
+/// * `segment_lengths`: map of segment ID to segment length in bp
+///
+/// # Returns
+///
+/// * `alignment_path1` and `alignment_path2`: alignment for both paths
 fn align_paths_subproblem(
     path1: &[i32],
     path2: &[i32],
@@ -94,7 +98,7 @@ fn align_paths_subproblem(
                 score_matrix[[i, j - 1]],     // come from left
             ];
 
-            score_matrix[[i, j]] = max(&possible_scores) + this_cell_score;
+            score_matrix[[i, j]] = amax(&possible_scores) + this_cell_score;
             traceback_matrix[[i, j]] = argmax(&possible_scores).try_into().unwrap();
         }
     }
@@ -141,6 +145,8 @@ pub fn align_paths(
     path1: &[i32],
     path2: &[i32],
     segment_lengths: &HashMap<i32, i32>,
+    max_highmem_length: usize,
+    max_lowmem_drop: usize,
 ) -> Vec<(Vec<i32>, Vec<i32>)> {
     // reverse-complemented version of path2
     let path2_rev: Vec<i32> = path2.iter().map(|x| -1 * x).rev().collect();
@@ -175,32 +181,37 @@ pub fn align_paths(
             }
             let path2_subproblem = &path2_rev[j..k];
 
-            // this is not ideal and I need to use a more intelligent algorithm to save memory:
-            // only keep two rows of the score matrix at a time, and make the traceback matrix
-            // sparse
-            if path1_subproblem.len() < 10000 && path2_subproblem.len() < 10000 {
-                let (alignment_path1, alignment_path2) =
-                    align_paths_subproblem(path1_subproblem, path2_subproblem, segment_lengths);
-                for segment in &alignment_path1 {
-                    used_segments.insert(segment.abs());
-                }
-                for segment in &alignment_path2 {
-                    used_segments.insert(segment.abs());
-                }
-                alignments.push((
-                    alignment_path1,
-                    alignment_path2.iter().rev().map(|x| -1 * x).collect(),
-                ));
+            // choose correct alignment algorithm depending on length
+            let (alignment_path1, alignment_path2) = if path1_subproblem.len() < max_highmem_length
+                && path2_subproblem.len() < max_highmem_length
+            {
+                align_paths_subproblem(path1_subproblem, path2_subproblem, segment_lengths)
             } else {
-                warn!(
-                    "Skipping alignment of s{}-s{} to s{}-s{} because it's too big.",
+                info!(
+                    "Using lowmem mode for alignment of {}:{} to {}:{}",
                     path1_subproblem[0],
                     path1_subproblem[path1_subproblem.len() - 1],
                     path2_subproblem[0],
                     path2_subproblem[path2_subproblem.len() - 1],
                 );
-                i += path1_subproblem.len()
+                lowmem::align_paths_subproblem_lowmem(
+                    path1_subproblem,
+                    path2_subproblem,
+                    segment_lengths,
+                    max_lowmem_drop,
+                )
+            };
+
+            for segment in &alignment_path1 {
+                used_segments.insert(segment.abs());
             }
+            for segment in &alignment_path2 {
+                used_segments.insert(segment.abs());
+            }
+            alignments.push((
+                alignment_path1,
+                alignment_path2.iter().rev().map(|x| -1 * x).collect(),
+            ));
         }
         i += 1;
     }
@@ -255,21 +266,21 @@ mod tests {
         }
 
         assert_eq!(
-            align_paths(&path1, &path2, &segment_lengths),
+            align_paths(&path1, &path2, &segment_lengths, 10000, 1000),
             vec![(vec![2, 3, 4, 5], vec![-5, -7, -2])]
         );
 
         let path3 = vec![1, 2, 3, 4, 5, 6, 7];
         let path4 = vec![1, -3, -2, 4, -6, -5, 7];
         assert_eq!(
-            align_paths(&path3, &path4, &segment_lengths),
+            align_paths(&path3, &path4, &segment_lengths, 10000, 1000),
             vec![(vec![2, 3], vec![-3, -2]), (vec![5, 6], vec![-6, -5])]
         );
 
         let path5 = vec![1, 2, 3, 4, 5, 6, 7];
         let path6 = vec![1, -3, -2, 8, -6, -5, 7];
         assert_eq!(
-            align_paths(&path5, &path6, &segment_lengths),
+            align_paths(&path5, &path6, &segment_lengths, 10000, 1000),
             vec![(vec![2, 3], vec![-3, -2]), (vec![5, 6], vec![-6, -5])]
         );
     }

@@ -19,6 +19,18 @@ struct Args {
 
     /// name of reference path
     ref_path: String,
+
+    /// when aligning paths longer than this, use the lowmem algorithm
+    #[arg(short, long, default_value_t = 10000)]
+    max_highmem_path_length: usize,
+
+    /// minimum length of an inversion in bp for it to be reported
+    #[arg(short, long, default_value_t = 50)]
+    min_inversion_length: i32,
+
+    /// maximum drop for heuristic in lowmem mode
+    #[arg(short, long, default_value_t = 1000)]
+    max_lowmem_drop: usize,
 }
 
 fn main() {
@@ -51,7 +63,13 @@ fn main() {
         if query_path_key != ref_path_key {
             info!("Starting alignment of path {}", query_path_key);
             query_path_keys.push(query_path_key.clone());
-            let alignments = align::align_paths(&ref_path, &query_path, &segment_lengths);
+            let alignments = align::align_paths(
+                &ref_path,
+                &query_path,
+                &segment_lengths,
+                args.max_highmem_path_length,
+                args.max_lowmem_drop,
+            );
 
             // make a list of segments that we need to find the positions of
             let mut segments_to_lookup = Vec::new();
@@ -65,9 +83,9 @@ fn main() {
             for alignment in alignments {
                 inversions.push((
                     query_path_key.clone(),
-                    base_positions.get(&alignment.0[0]).unwrap().0,
+                    base_positions.get(&alignment.0[0].abs()).unwrap().0,
                     base_positions
-                        .get(&alignment.0[alignment.0.len() - 1])
+                        .get(&alignment.0[alignment.0.len() - 1].abs())
                         .unwrap()
                         .1,
                 ));
@@ -88,27 +106,29 @@ fn main() {
     let mut keys: Vec<&(i32, i32)> = inversions_collated.keys().collect();
     keys.sort_by_key(|k| k.0);
     for (start_position, end_position) in keys {
-        let paths = inversions_collated
-            .get(&(*start_position, *end_position))
-            .unwrap();
-        let mut calls = Vec::<i8>::new();
-        for query_path_key in &query_path_keys {
-            if paths.contains(query_path_key) {
-                calls.push(1);
-            } else {
-                calls.push(0);
+        if end_position - start_position >= args.min_inversion_length {
+            let paths = inversions_collated
+                .get(&(*start_position, *end_position))
+                .unwrap();
+            let mut calls = Vec::<i8>::new();
+            for query_path_key in &query_path_keys {
+                if paths.contains(query_path_key) {
+                    calls.push(1);
+                } else {
+                    calls.push(0);
+                }
             }
+            println!(
+                "{}\t{}\t{}\t{}",
+                ref_path_key,
+                start_position,
+                end_position,
+                calls
+                    .iter()
+                    .map(|x| x.to_string())
+                    .collect::<Vec<_>>()
+                    .join("\t"),
+            );
         }
-        println!(
-            "{}\t{}\t{}\t{}",
-            ref_path_key,
-            start_position,
-            end_position,
-            calls
-                .iter()
-                .map(|x| x.to_string())
-                .collect::<Vec<_>>()
-                .join("\t"),
-        );
     }
 }
