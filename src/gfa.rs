@@ -47,7 +47,9 @@ pub fn parse_gfa_path(path_string: &str) -> Vec<i32> {
 /// # Returns
 /// * `segment_lengths` - map of segment ID to segment length in bp
 /// * `paths` - map of path ID to vector of path with segment orientation indicated by sign
-pub fn read_gfa(path: PathBuf) -> (HashMap<i32, i32>, HashMap<String, Vec<i32>>) {
+/// * `path_names` - the keys of `paths`, but in the order they were read, because I find the
+///   nondeterministic order that stuff comes out of the HashMap to be disturbing
+pub fn read_gfa(path: PathBuf) -> (HashMap<i32, i32>, HashMap<String, Vec<i32>>, Vec<String>) {
     let file = match File::open(&path) {
         Err(why) => panic!("couldn't open {}: {}", path.display(), why),
         Ok(file) => file,
@@ -56,6 +58,7 @@ pub fn read_gfa(path: PathBuf) -> (HashMap<i32, i32>, HashMap<String, Vec<i32>>)
 
     let mut segment_lengths: HashMap<i32, i32> = HashMap::new();
     let mut paths = HashMap::new();
+    let mut path_names = Vec::new();
 
     for line in reader.lines().map(|l| l.unwrap()) {
         let fields: Vec<&str> = line.split("\t").collect();
@@ -67,10 +70,11 @@ pub fn read_gfa(path: PathBuf) -> (HashMap<i32, i32>, HashMap<String, Vec<i32>>)
             );
         } else if fields[0] == "P" {
             paths.insert(fields[1].to_string(), parse_gfa_path(fields[2]));
+            path_names.push(fields[1].to_string());
         }
     }
 
-    return (segment_lengths, paths);
+    return (segment_lengths, paths, path_names);
 }
 
 /// Lookup start and end positions of segments in a path.

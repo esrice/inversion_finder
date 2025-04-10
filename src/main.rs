@@ -45,7 +45,7 @@ fn main() {
         .unwrap();
 
     info!("Reading GFA");
-    let (segment_lengths, paths) = gfa::read_gfa(args.gfa);
+    let (segment_lengths, paths, path_names) = gfa::read_gfa(args.gfa);
 
     let ref_path_key = if paths.contains_key(&args.ref_path) {
         args.ref_path
@@ -61,10 +61,11 @@ fn main() {
 
     let mut query_path_keys = Vec::<String>::new();
     let mut inversions = Vec::<(String, i32, i32)>::new();
-    for (query_path_key, query_path) in paths {
+    for query_path_key in path_names {
         if query_path_key != ref_path_key {
             info!("Starting alignment of path {}", query_path_key);
             query_path_keys.push(query_path_key.clone());
+            let query_path = paths.get(&query_path_key).unwrap();
             let alignments = align::align_paths(
                 &ref_path,
                 &query_path,
