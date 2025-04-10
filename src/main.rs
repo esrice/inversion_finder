@@ -8,6 +8,8 @@ use clap::Parser;
 use inversion_finder::*;
 use log::{Level, info};
 
+mod gfa;
+
 /// Look for inversions in a pangenome graph in GFA format
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -29,7 +31,7 @@ fn main() {
         .init()
         .unwrap();
 
-    let (segment_lengths, paths) = read_gfa(args.gfa);
+    let (segment_lengths, paths) = gfa::read_gfa(args.gfa);
 
     let ref_path_key = if paths.contains_key(&args.ref_path) {
         args.ref_path
@@ -49,7 +51,7 @@ fn main() {
         if query_path_key != ref_path_key {
             info!("Starting alignment of path {}", query_path_key);
             query_path_keys.push(query_path_key.clone());
-            let alignments = align_paths(&ref_path, &query_path, &segment_lengths);
+            let alignments = align::align_paths(&ref_path, &query_path, &segment_lengths);
 
             // make a list of segments that we need to find the positions of
             let mut segments_to_lookup = Vec::new();
@@ -58,7 +60,7 @@ fn main() {
                 segments_to_lookup.push(alignment.0[alignment.0.len() - 1]);
             }
             let base_positions =
-                lookup_base_positions(&ref_path, &segment_lengths, &segments_to_lookup);
+                gfa::lookup_base_positions(&ref_path, &segment_lengths, &segments_to_lookup);
 
             for alignment in alignments {
                 inversions.push((
