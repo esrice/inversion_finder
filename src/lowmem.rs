@@ -1,4 +1,6 @@
 use super::{amax, argmax};
+use log::debug;
+use std::cmp::min;
 use std::collections::HashMap;
 
 fn max_and_argmax(a: &[i32]) -> (i32, i32) {
@@ -69,6 +71,15 @@ pub fn align_paths_subproblem_lowmem(
     segment_lengths: &HashMap<i32, i32>,
     drop: usize,
 ) -> (Vec<i32>, Vec<i32>) {
+    debug!(
+        "Performing lowmem alignment of {}:{} to {}:{} ({}x{})",
+        path1[0],
+        path1[path1.len() - 1],
+        path2[0],
+        path2[path2.len() - 1],
+        path1.len(),
+        path2.len(),
+    );
     let (
         mut score_row_previous,
         mut score_row_current,
@@ -78,9 +89,9 @@ pub fn align_paths_subproblem_lowmem(
     ) = initialize_matrices_lowmem(&path1, &path2, &segment_lengths);
 
     let (max_row_drop, max_col_drop) = if path1.len() > path2.len() {
-        (drop + path1.len() - path2.len(), drop)
+        (min(drop + path1.len() - path2.len(), drop * 5), drop)
     } else {
-        (drop, drop + path2.len() - path1.len())
+        (drop, min(drop + path2.len() - path1.len(), drop * 5))
     };
 
     for i in 1..path1.len() {
@@ -139,8 +150,13 @@ pub fn align_paths_subproblem_lowmem(
         score_row_previous = score_row_current;
         score_row_current = score_row_tmp;
     }
-
-    return traceback_lowmem(&path1, &path2, argmax_score, &traceback_matrix);
+    let traceback = traceback_lowmem(&path1, &path2, argmax_score, &traceback_matrix);
+    debug!(
+        "Finished lowmem alignment of length {}x{}",
+        traceback.0.len(),
+        traceback.1.len()
+    );
+    return traceback;
 }
 
 fn traceback_lowmem(

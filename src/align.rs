@@ -1,4 +1,4 @@
-use log::info;
+use log::debug;
 use ndarray::{Array, Array2};
 use ndarray_stats::QuantileExt;
 use std::collections::{HashMap, HashSet};
@@ -165,18 +165,23 @@ pub fn align_paths(
 
     let mut alignments = Vec::new();
 
-    let mut i = 0;
-    while i < path1.len() {
+    for i in 0..path1.len() {
         if common_segments.contains(&path1[i].abs()) && !used_segments.contains(&path1[i].abs()) {
             let mut k = i;
-            while k < path1.len() && !conflicting_segments.contains(&path1[k].abs()) {
+            while k < path1.len()
+                && !conflicting_segments.contains(&path1[k].abs())
+                && !used_segments.contains(&path1[k].abs())
+            {
                 k += 1;
             }
             let path1_subproblem = &path1[i..k];
 
             let j = path2_rev.iter().position(|&x| x == path1[i]).unwrap();
             k = j;
-            while k < path2_rev.len() && !conflicting_segments.contains(&path2_rev[k].abs()) {
+            while k < path2_rev.len()
+                && !conflicting_segments.contains(&path2_rev[k].abs())
+                && !used_segments.contains(&path2_rev[k].abs())
+            {
                 k += 1;
             }
             let path2_subproblem = &path2_rev[j..k];
@@ -187,13 +192,6 @@ pub fn align_paths(
             {
                 align_paths_subproblem(path1_subproblem, path2_subproblem, segment_lengths)
             } else {
-                info!(
-                    "Using lowmem mode for alignment of {}:{} to {}:{}",
-                    path1_subproblem[0],
-                    path1_subproblem[path1_subproblem.len() - 1],
-                    path2_subproblem[0],
-                    path2_subproblem[path2_subproblem.len() - 1],
-                );
                 lowmem::align_paths_subproblem_lowmem(
                     path1_subproblem,
                     path2_subproblem,
@@ -213,7 +211,6 @@ pub fn align_paths(
                 alignment_path2.iter().rev().map(|x| -1 * x).collect(),
             ));
         }
-        i += 1;
     }
 
     return alignments;

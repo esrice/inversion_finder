@@ -1,12 +1,9 @@
-extern crate clap;
-
+use clap::Parser;
+use clap_verbosity_flag::{InfoLevel, Verbosity};
+use inversion_finder::*;
+use log::info;
 use std::collections::HashMap;
 use std::path::PathBuf;
-
-use clap::Parser;
-
-use inversion_finder::*;
-use log::{Level, info};
 
 mod gfa;
 
@@ -25,12 +22,16 @@ struct Args {
     max_highmem_path_length: usize,
 
     /// minimum length of an inversion in bp for it to be reported
-    #[arg(short, long, default_value_t = 50)]
+    #[arg(short = 'l', long, default_value_t = 50)]
     min_inversion_length: i32,
 
     /// maximum drop for heuristic in lowmem mode
-    #[arg(short, long, default_value_t = 1000)]
+    #[arg(short = 'd', long, default_value_t = 1000)]
     max_lowmem_drop: usize,
+
+    /// verbosity level of logging to stderr
+    #[command(flatten)]
+    verbose: Verbosity<InfoLevel>,
 }
 
 fn main() {
@@ -38,11 +39,12 @@ fn main() {
 
     stderrlog::new()
         .module(module_path!())
-        .verbosity(Level::Info)
+        .verbosity(args.verbose.log_level_filter())
         .timestamp(stderrlog::Timestamp::Second)
         .init()
         .unwrap();
 
+    info!("Reading GFA");
     let (segment_lengths, paths) = gfa::read_gfa(args.gfa);
 
     let ref_path_key = if paths.contains_key(&args.ref_path) {
