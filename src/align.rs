@@ -1,4 +1,3 @@
-use log::debug;
 use ndarray::{Array, Array2};
 use ndarray_stats::QuantileExt;
 use std::collections::{HashMap, HashSet};
@@ -30,7 +29,8 @@ fn create_matrices(
     score_matrix[[0, 0]] = if path1[0] == path2[0] {
         *segment_lengths.get(&path1[0].abs()).unwrap()
     } else {
-        -1
+        -1 * (*segment_lengths.get(&path1[0].abs()).unwrap()
+            + *segment_lengths.get(&path2[0].abs()).unwrap())
     };
 
     // fill in the first column
@@ -38,7 +38,7 @@ fn create_matrices(
         let this_cell_score = if path1[i] == path2[0] {
             *segment_lengths.get(&path1[i].abs()).unwrap()
         } else {
-            -1
+            -1 * *segment_lengths.get(&path1[i].abs()).unwrap()
         };
 
         let possible_scores = [0, -1, score_matrix[[i - 1, 0]], -1];
@@ -51,7 +51,7 @@ fn create_matrices(
         let this_cell_score = if path2[j] == path1[0] {
             *segment_lengths.get(&path2[j].abs()).unwrap()
         } else {
-            -1
+            -1 * *segment_lengths.get(&path2[j].abs()).unwrap()
         };
 
         let possible_scores = [0, -1, -1, score_matrix[[0, j - 1]]];
@@ -84,21 +84,26 @@ fn align_paths_subproblem(
         create_matrices(&path1, &path2, &segment_lengths);
 
     for i in 1..path1.len() {
+        let len_i = *segment_lengths.get(&path1[i].abs()).unwrap();
         for j in 1..path2.len() {
-            let this_cell_score = if path1[i] == path2[j] {
-                *segment_lengths.get(&path1[i].abs()).unwrap()
+            let len_j = *segment_lengths.get(&path2[j].abs()).unwrap();
+            let possible_scores = if path1[i] == path2[j] {
+                [
+                    len_i,
+                    score_matrix[[i - 1, j - 1]] + len_i, // come from diagonal
+                    score_matrix[[i - 1, j]] + len_i,     // come from above
+                    score_matrix[[i, j - 1]] + len_i,     // come from left
+                ]
             } else {
-                -1
+                [
+                    -len_i - len_j,
+                    score_matrix[[i - 1, j - 1]] - len_i - len_j,
+                    score_matrix[[i - 1, j]] - len_i,
+                    score_matrix[[i, j - 1]] - len_j,
+                ]
             };
 
-            let possible_scores = [
-                0,
-                score_matrix[[i - 1, j - 1]], // come from diagonal
-                score_matrix[[i - 1, j]],     // come from above
-                score_matrix[[i, j - 1]],     // come from left
-            ];
-
-            score_matrix[[i, j]] = amax(&possible_scores) + this_cell_score;
+            score_matrix[[i, j]] = amax(&possible_scores);
             traceback_matrix[[i, j]] = argmax(&possible_scores).try_into().unwrap();
         }
     }
@@ -226,11 +231,11 @@ mod tests {
         let path1 = vec![2, 3, 4, -5];
         let path2 = vec![2, 7, -5];
         let segment_lengths: HashMap<i32, i32> =
-            HashMap::from([(2, 100), (3, 100), (4, 100), (5, 100), (7, 100)]);
+            HashMap::from([(2, 100), (3, 10), (4, 10), (5, 100), (7, 10)]);
         let (score_matrix, traceback_matrix) = create_matrices(&path1, &path2, &segment_lengths);
         assert_eq!(
             score_matrix,
-            array![[100, 99, 98], [99, 0, 0], [98, 0, 0], [97, 0, 0]]
+            array![[100, 90, -10], [90, 0, 0], [80, 0, 0], [-20, 0, 0]]
         );
 
         assert_eq!(
@@ -241,11 +246,20 @@ mod tests {
 
     #[test]
     fn test_align_subproblem() {
-        let path1 = vec![2, 3, 4, -5, 6];
-        let path2 = vec![6, 2, 7, -5];
+        let path1: Vec<i32> = vec![2, 3, 4, -5, 6];
+        let path2: Vec<i32> = vec![6, 2, 7, -5];
         let mut segment_lengths: HashMap<i32, i32> = HashMap::new();
-        for i in 0..7 {
-            segment_lengths.insert(i, 100);
+        for i in 0..8 {
+            segment_lengths.insert(
+                i,
+                if (path1.contains(&i) || path1.contains(&(-i)))
+                    && (path2.contains(&i) || path2.contains(&(-i)))
+                {
+                    100
+                } else {
+                    10
+                },
+            );
         }
         let (path1_alignment, path2_alignment) =
             align_paths_subproblem(&path1, &path2, &segment_lengths);
@@ -259,7 +273,16 @@ mod tests {
         let path2 = vec![1, -5, -7, -2, 6];
         let mut segment_lengths: HashMap<i32, i32> = HashMap::new();
         for i in 0..10 {
-            segment_lengths.insert(i, 100);
+            segment_lengths.insert(
+                i,
+                if (path1.contains(&i) || path1.contains(&(-i)))
+                    && (path2.contains(&i) || path2.contains(&(-i)))
+                {
+                    100
+                } else {
+                    10
+                },
+            );
         }
 
         assert_eq!(
