@@ -29,6 +29,10 @@ struct Args {
     #[arg(short = 'd', long, default_value_t = 1000)]
     max_lowmem_drop: usize,
 
+    /// comma-separated list of paths to exclude
+    #[arg(short, long)]
+    exclude: String,
+
     /// verbosity level of logging to stderr
     #[command(flatten)]
     verbose: Verbosity<InfoLevel>,
@@ -58,11 +62,16 @@ fn main() {
     };
 
     let ref_path = paths.get(&ref_path_key).unwrap().clone();
+    let paths_to_exclude: Vec<_> = args.exclude.split(",").collect();
 
     let mut query_path_keys = Vec::<String>::new();
     let mut inversions = Vec::<(String, i32, i32)>::new();
     for query_path_key in path_names {
-        if query_path_key != ref_path_key {
+        if query_path_key != ref_path_key
+            && !paths_to_exclude
+                .iter()
+                .any(|x| *x == query_path_key || *x == query_path_key.split("#").nth(0).unwrap())
+        {
             info!("Starting alignment of path {}", query_path_key);
             query_path_keys.push(query_path_key.clone());
             let query_path = paths.get(&query_path_key).unwrap();
@@ -105,6 +114,7 @@ fn main() {
             .or_insert(vec![path.clone()]);
     }
 
+    // print the collated inversions out ordered by start position
     println!("ref\tstart\tend\t{}", query_path_keys.join("\t"));
     let mut keys: Vec<&(i32, i32)> = inversions_collated.keys().collect();
     keys.sort_by_key(|k| k.0);
