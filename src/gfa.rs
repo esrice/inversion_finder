@@ -1,5 +1,5 @@
 use regex::Regex;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
@@ -83,11 +83,11 @@ pub fn read_gfa(path: PathBuf) -> (HashMap<i32, i32>, HashMap<String, Vec<i32>>,
 ///
 /// * `path`: list of segments in path
 /// * `segment_lengths`: map of segment ID to segment length in bp
-/// * `segments`: IDs of segments to look up
+/// * `segments`: indices in `path` of segments to look up
 ///
 /// # Returns
 ///
-/// * map of segment ID to tuple of start and end positions of segment in path, in bp
+/// * map of segment index to tuple of start and end positions of segment in path, in bp
 ///
 /// # Examples
 ///
@@ -100,31 +100,24 @@ pub fn read_gfa(path: PathBuf) -> (HashMap<i32, i32>, HashMap<String, Vec<i32>>,
 ///     segment_lengths.insert(i, 100);
 /// }
 /// let base_positions =
-///     gfa::lookup_base_positions(&[1,-2,3,4,5,-6,-7], &segment_lengths, &[1,3,7]);
-/// assert_eq!(base_positions.get(&1).unwrap(), &(1, 100));
-/// assert_eq!(base_positions.get(&7).unwrap(), &(601, 700));
+///     gfa::lookup_base_positions(&[1,-2,3,4,5,-6,-7], &segment_lengths, &[1,3,6]);
+/// assert_eq!(base_positions.get(&1).unwrap(), &(101, 200));
+/// assert_eq!(base_positions.get(&6).unwrap(), &(601, 700));
 /// ```
 pub fn lookup_base_positions(
     path: &[i32],
     segment_lengths: &HashMap<i32, i32>,
-    segments: &[i32],
+    segment_indices: &[i32],
 ) -> HashMap<i32, (i32, i32)> {
-    // first, populate the map of segment positions with the segments we actually want to lookup as
-    // keys and dummy values
+    let segment_indices_set = HashSet::<i32>::from_iter(segment_indices.iter().cloned());
     let mut segment_positions: HashMap<i32, (i32, i32)> = HashMap::new();
-    for segment in segments {
-        segment_positions.insert(segment.abs(), (-1, -1));
-    }
 
     let mut current_position = 0;
-    for segment in path.iter().map(|s| s.abs()) {
-        let this_segment_length = match segment_lengths.get(&segment) {
-            Some(x) => x,
-            None => panic!("{segment} not in segment_lengths!"),
-        };
-        if segment_positions.contains_key(&segment) {
+    for (i, segment) in path.iter().map(|s| s.abs()).enumerate() {
+        let this_segment_length = segment_lengths.get(&segment).unwrap();
+        if segment_indices_set.contains(&i.try_into().unwrap()) {
             segment_positions.insert(
-                segment,
+                i.try_into().unwrap(),
                 (current_position + 1, current_position + this_segment_length),
             );
         }

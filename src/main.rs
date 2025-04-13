@@ -30,7 +30,7 @@ struct Args {
     max_lowmem_drop: usize,
 
     /// comma-separated list of paths to exclude
-    #[arg(short, long)]
+    #[arg(short, long, default_value = "")]
     exclude: String,
 
     /// verbosity level of logging to stderr
@@ -86,21 +86,16 @@ fn main() {
             // make a list of segments that we need to find the positions of
             let mut segments_to_lookup = Vec::new();
             for alignment in &alignments {
-                segments_to_lookup.push(alignment.0[0]);
-                segments_to_lookup.push(alignment.0[alignment.0.len() - 1]);
+                segments_to_lookup.push(alignment.path1_start_index);
+                segments_to_lookup.push(alignment.path1_end_index);
             }
             let base_positions =
                 gfa::lookup_base_positions(&ref_path, &segment_lengths, &segments_to_lookup);
 
             for alignment in alignments {
-                inversions.push((
-                    query_path_key.clone(),
-                    base_positions.get(&alignment.0[0].abs()).unwrap().0,
-                    base_positions
-                        .get(&alignment.0[alignment.0.len() - 1].abs())
-                        .unwrap()
-                        .1,
-                ));
+                let start_position = base_positions.get(&alignment.path1_start_index).unwrap().0;
+                let end_position = base_positions.get(&alignment.path1_end_index).unwrap().1;
+                inversions.push((query_path_key.clone(), start_position, end_position));
             }
         }
     }

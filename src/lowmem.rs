@@ -1,4 +1,4 @@
-use super::{amax, argmax};
+use super::{align, amax, argmax};
 use log::debug;
 use std::collections::HashMap;
 
@@ -72,7 +72,7 @@ pub fn align_paths_subproblem_lowmem(
     path2: &[i32],
     segment_lengths: &HashMap<i32, i32>,
     drop: usize,
-) -> (Vec<i32>, Vec<i32>) {
+) -> align::Alignment {
     debug!(
         "Performing lowmem alignment of {}:{} to {}:{} ({}x{})",
         path1[0],
@@ -167,8 +167,8 @@ pub fn align_paths_subproblem_lowmem(
     let traceback = traceback_lowmem(&path1, &path2, argmax_score, &traceback_matrix);
     debug!(
         "Finished lowmem alignment of length {}x{}",
-        traceback.0.len(),
-        traceback.1.len()
+        traceback.alignment_path1.len(),
+        traceback.alignment_path2.len()
     );
     return traceback;
 }
@@ -178,8 +178,9 @@ fn traceback_lowmem(
     path2: &[i32],
     argmax_score: (i32, i32),
     traceback_matrix: &HashMap<(i32, i32), i8>,
-) -> (Vec<i32>, Vec<i32>) {
+) -> align::Alignment {
     let (mut i, mut j) = argmax_score;
+    let path1_end_index = i;
     let mut alignment_end_reached = false;
     let mut alignment_path1: Vec<i32> = Vec::new();
     let mut alignment_path2: Vec<i32> = Vec::new();
@@ -204,9 +205,15 @@ fn traceback_lowmem(
             Some(x) => panic!("Bad value {} in traceback matrix!", x),
         }
     }
+    let path1_start_index = i;
     alignment_path1.reverse();
     alignment_path2.reverse();
-    return (alignment_path1, alignment_path2);
+    return align::Alignment {
+        alignment_path1,
+        alignment_path2,
+        path1_start_index,
+        path1_end_index,
+    };
 }
 
 #[cfg(test)]
@@ -230,9 +237,11 @@ mod tests {
                 },
             );
         }
-        let (path1_alignment, path2_alignment) =
-            align_paths_subproblem_lowmem(&path1, &path2, &segment_lengths, 100);
-        assert_eq!(path1_alignment, vec![2, 3, 4, -5]);
-        assert_eq!(path2_alignment, vec![2, 7, -5]);
+        //let (path1_alignment, path2_alignment, path1_start_index, path1_end_index) =
+        let alignment = align_paths_subproblem_lowmem(&path1, &path2, &segment_lengths, 100);
+        assert_eq!(alignment.alignment_path1, vec![2, 3, 4, -5]);
+        assert_eq!(alignment.alignment_path2, vec![2, 7, -5]);
+        assert_eq!(alignment.path1_start_index, 0);
+        assert_eq!(alignment.path1_end_index, 3);
     }
 }
