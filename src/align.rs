@@ -232,6 +232,8 @@ pub fn align_paths(
                     max_lowmem_drop,
                 )
             };
+            // TODO add a third option: if the paths are just too damn long, don't try to align
+            // them
 
             for segment in &alignment.alignment_path1 {
                 used_segments.insert(segment.abs());

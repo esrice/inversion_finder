@@ -1,4 +1,5 @@
 pub mod align;
+pub mod alignment_interface;
 pub mod gfa;
 pub mod lowmem;
 
