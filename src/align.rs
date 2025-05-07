@@ -175,6 +175,7 @@ pub fn align_paths(
     segment_lengths: &HashMap<i32, i32>,
     max_highmem_length: usize,
     max_lowmem_drop: usize,
+    max_path_length: usize,
 ) -> Vec<Alignment> {
     // reverse-complemented version of path2
     let path2_rev: Vec<i32> = path2.iter().map(|x| -1 * x).rev().collect();
@@ -220,38 +221,46 @@ pub fn align_paths(
             let path2_subproblem = &path2_rev[subproblem2_start..subproblem2_end];
 
             // choose correct alignment algorithm depending on length
-            let alignment = if path1_subproblem.len() < max_highmem_length
+            let alignment_option = if path1_subproblem.len() < max_highmem_length
                 && path2_subproblem.len() < max_highmem_length
             {
-                align_paths_subproblem(path1_subproblem, path2_subproblem, segment_lengths)
-            } else {
-                lowmem::align_paths_subproblem_lowmem(
+                Some(align_paths_subproblem(
+                    path1_subproblem,
+                    path2_subproblem,
+                    segment_lengths,
+                ))
+            } else if path1_subproblem.len() < max_path_length
+                && path2_subproblem.len() < max_path_length
+            {
+                Some(lowmem::align_paths_subproblem_lowmem(
                     path1_subproblem,
                     path2_subproblem,
                     segment_lengths,
                     max_lowmem_drop,
-                )
+                ))
+            } else {
+                None
             };
-            // TODO add a third option: if the paths are just too damn long, don't try to align
-            // them
 
-            for segment in &alignment.alignment_path1 {
-                used_segments.insert(segment.abs());
+            if let Some(alignment) = alignment_option {
+                for segment in &alignment.alignment_path1 {
+                    used_segments.insert(segment.abs());
+                }
+                for segment in &alignment.alignment_path2 {
+                    used_segments.insert(segment.abs());
+                }
+                alignments.push(Alignment {
+                    alignment_path1: alignment.alignment_path1,
+                    alignment_path2: alignment
+                        .alignment_path2
+                        .iter()
+                        .rev()
+                        .map(|x| -1 * x)
+                        .collect(),
+                    path1_start_index: (subproblem1_start as i32) + alignment.path1_start_index,
+                    path1_end_index: (subproblem1_start as i32) + alignment.path1_end_index,
+                });
             }
-            for segment in &alignment.alignment_path2 {
-                used_segments.insert(segment.abs());
-            }
-            alignments.push(Alignment {
-                alignment_path1: alignment.alignment_path1,
-                alignment_path2: alignment
-                    .alignment_path2
-                    .iter()
-                    .rev()
-                    .map(|x| -1 * x)
-                    .collect(),
-                path1_start_index: (subproblem1_start as i32) + alignment.path1_start_index,
-                path1_end_index: (subproblem1_start as i32) + alignment.path1_end_index,
-            });
         }
     }
 
@@ -324,7 +333,7 @@ mod tests {
             );
         }
 
-        let alignments1 = align_paths(&path1, &path2, &segment_lengths, 10000, 1000);
+        let alignments1 = align_paths(&path1, &path2, &segment_lengths, 10000, 1000, 100000);
         assert_eq!(alignments1[0].alignment_path1, vec![2, 3, 4, 5]);
         assert_eq!(alignments1[0].alignment_path2, vec![-5, -7, -2]);
         assert_eq!(alignments1[0].path1_start_index, 1);
@@ -332,7 +341,7 @@ mod tests {
 
         let path3 = vec![1, 2, 3, 4, 5, 6, 7];
         let path4 = vec![1, -3, -2, 4, -6, -5, 7];
-        let alignments2 = align_paths(&path3, &path4, &segment_lengths, 10000, 1000);
+        let alignments2 = align_paths(&path3, &path4, &segment_lengths, 10000, 1000, 100000);
         assert_eq!(alignments2[0].alignment_path1, vec![2, 3]);
         assert_eq!(alignments2[0].alignment_path2, vec![-3, -2]);
         assert_eq!(alignments2[0].path1_start_index, 1);
@@ -344,7 +353,7 @@ mod tests {
 
         let path5 = vec![1, 2, 3, 4, 5, 6, 7];
         let path6 = vec![1, -3, -2, 8, -6, -5, 7];
-        let alignments3 = align_paths(&path5, &path6, &segment_lengths, 10000, 1000);
+        let alignments3 = align_paths(&path5, &path6, &segment_lengths, 10000, 1000, 100000);
         assert_eq!(alignments3[0].alignment_path1, vec![2, 3]);
         assert_eq!(alignments3[0].alignment_path2, vec![-3, -2]);
         assert_eq!(alignments3[0].path1_start_index, 1);

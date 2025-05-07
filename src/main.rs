@@ -73,6 +73,7 @@ fn main() {
         alignment_interface::AlignmentOptions {
             max_highmem_path_length: args.max_highmem_path_length,
             max_lowmem_drop: args.max_lowmem_drop,
+            max_path_length: args.max_path_length,
         },
     );
 

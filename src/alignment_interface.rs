@@ -7,6 +7,7 @@ use crate::{align, gfa};
 pub struct AlignmentOptions {
     pub max_highmem_path_length: usize,
     pub max_lowmem_drop: usize,
+    pub max_path_length: usize,
 }
 
 /// Align every non-reference path to the reference.
@@ -52,6 +53,7 @@ pub fn align_all_queries(
                 &segment_lengths,
                 alignment_options.max_highmem_path_length,
                 alignment_options.max_lowmem_drop,
+                alignment_options.max_path_length,
             );
 
             // make a list of segments that we need to find the positions of
