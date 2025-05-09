@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, error::Error};
 
 use log::info;
 
@@ -33,10 +33,13 @@ pub fn align_all_queries(
     paths_to_exclude: &[&str],
     ref_path_key: &str,
     alignment_options: AlignmentOptions,
-) -> (Vec<(String, i32, i32)>, Vec<String>) {
+) -> Result<(Vec<(String, i32, i32)>, Vec<String>), Box<dyn Error>> {
     let mut query_path_keys = Vec::<String>::new();
     let mut inversions = Vec::<(String, i32, i32)>::new();
-    let ref_path = paths.get(ref_path_key).unwrap().clone();
+    let ref_path = paths
+        .get(ref_path_key)
+        .ok_or(format!("Cannot find path with name {}", ref_path_key))?
+        .clone();
 
     for query_path_key in path_names {
         if query_path_key != ref_path_key
@@ -45,7 +48,9 @@ pub fn align_all_queries(
                 .any(|x| x == query_path_key || *x == query_path_key.split("#").nth(0).unwrap())
         {
             info!("Starting alignment of path {}", query_path_key);
-            let query_path = paths.get(query_path_key).unwrap();
+            let query_path = paths
+                .get(query_path_key)
+                .ok_or(format!("Cannot find path with name {}", query_path_key))?;
             query_path_keys.push(query_path_key.clone());
             let alignments = align::align_paths(
                 &ref_path,
@@ -63,7 +68,7 @@ pub fn align_all_queries(
                 segments_to_lookup.push(alignment.path1_end_index);
             }
             let base_positions =
-                gfa::lookup_base_positions(&ref_path, &segment_lengths, &segments_to_lookup);
+                gfa::lookup_base_positions(&ref_path, &segment_lengths, &segments_to_lookup)?;
 
             for alignment in alignments {
                 let start_position = base_positions.get(&alignment.path1_start_index).unwrap().0;
@@ -72,7 +77,7 @@ pub fn align_all_queries(
             }
         }
     }
-    (inversions, query_path_keys)
+    Ok((inversions, query_path_keys))
 }
 
 pub fn print_collated_inversions(
@@ -80,7 +85,7 @@ pub fn print_collated_inversions(
     query_path_keys: &[String],
     ref_path_key: &str,
     min_inversion_length: i32,
-) {
+) -> Result<(), Box<dyn Error>> {
     // finally, collate the inversions from the different animals and print out a table
     let mut inversions_collated: HashMap<(i32, i32), Vec<String>> = HashMap::new();
     for (path, start_position, end_position) in inversions {
@@ -98,7 +103,10 @@ pub fn print_collated_inversions(
         if end_position - start_position >= min_inversion_length {
             let paths = inversions_collated
                 .get(&(*start_position, *end_position))
-                .unwrap();
+                .ok_or(format!(
+                    "Cannot find inversion {}-{}",
+                    *start_position, *end_position
+                ))?;
             let mut calls = Vec::<i8>::new();
             for query_path_key in query_path_keys {
                 if paths.contains(query_path_key) {
@@ -120,4 +128,5 @@ pub fn print_collated_inversions(
             );
         }
     }
+    Ok(())
 }

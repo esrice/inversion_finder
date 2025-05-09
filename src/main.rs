@@ -2,7 +2,7 @@ use clap::Parser;
 use clap_verbosity_flag::{InfoLevel, Verbosity};
 use inversion_finder::*;
 use log::info;
-use std::path::PathBuf;
+use std::{error::Error, path::PathBuf};
 
 /// Look for inversions in a pangenome graph in GFA format
 #[derive(Parser, Debug)]
@@ -39,7 +39,7 @@ struct Args {
     verbose: Verbosity<InfoLevel>,
 }
 
-fn main() {
+fn main() -> Result<(), Box<dyn Error>> {
     let args = Args::parse();
 
     stderrlog::new()
@@ -50,7 +50,7 @@ fn main() {
         .unwrap();
 
     info!("Reading GFA");
-    let (segment_lengths, paths, path_names) = gfa::read_gfa(args.gfa);
+    let (segment_lengths, paths, path_names) = gfa::read_gfa(args.gfa)?;
 
     let ref_path_key = if paths.contains_key(&args.ref_path) {
         args.ref_path
@@ -75,12 +75,12 @@ fn main() {
             max_lowmem_drop: args.max_lowmem_drop,
             max_path_length: args.max_path_length,
         },
-    );
+    )?;
 
     alignment_interface::print_collated_inversions(
         &inversions,
         &query_path_keys,
         &ref_path_key,
         args.min_inversion_length,
-    );
+    )
 }
