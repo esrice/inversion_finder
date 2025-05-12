@@ -1,3 +1,5 @@
+use crate::InversionError;
+
 use super::{align, amax, argmax};
 use log::debug;
 use std::collections::HashMap;
@@ -11,14 +13,16 @@ fn max_and_argmax(a: &[i32]) -> (i32, i32) {
             argmax = i;
         }
     }
-    return (max, argmax.try_into().unwrap());
+    return (max, argmax.try_into().expect("i32 overflow"));
 }
+
+struct InitializeMatricesLowmemResult(Vec<i32>, Vec<i32>, HashMap<(i32, i32), i8>, i32, (i32, i32));
 
 fn initialize_matrices_lowmem(
     path1: &[i32],
     path2: &[i32],
     segment_lengths: &HashMap<i32, i32>,
-) -> (Vec<i32>, Vec<i32>, HashMap<(i32, i32), i8>, i32, (i32, i32)) {
+) -> Result<InitializeMatricesLowmemResult, InversionError> {
     let mut score_row_previous = Vec::<i32>::with_capacity(path2.len());
     // this is a sparse representation of the traceback matrix: if a key isn't present, that
     // indicates that the value is actually 0
@@ -26,25 +30,35 @@ fn initialize_matrices_lowmem(
 
     // fill in the corner
     score_row_previous.push(if path1[0] == path2[0] {
-        *segment_lengths.get(&path1[0].abs()).unwrap()
+        *segment_lengths
+            .get(&path1[0].abs())
+            .ok_or(InversionError::SegmentNotFound(path1[0].abs()))?
     } else {
-        -1 * (*segment_lengths.get(&path1[0].abs()).unwrap()
-            + *segment_lengths.get(&path2[0].abs()).unwrap())
+        -1 * (*segment_lengths
+            .get(&path1[0].abs())
+            .ok_or(InversionError::SegmentNotFound(path1[0].abs()))?
+            + *segment_lengths
+                .get(&path2[0].abs())
+                .ok_or(InversionError::SegmentNotFound(path2[0].abs()))?)
     });
 
     // fill in the rest of the first row
     for j in 1..path2.len() {
         let this_cell_score = if path2[j] == path1[0] {
-            *segment_lengths.get(&path2[j].abs()).unwrap()
+            *segment_lengths
+                .get(&path2[j].abs())
+                .ok_or(InversionError::SegmentNotFound(path2[j].abs()))?
         } else {
-            -1 * *segment_lengths.get(&path2[j].abs()).unwrap()
+            -1 * *segment_lengths
+                .get(&path2[j].abs())
+                .ok_or(InversionError::SegmentNotFound(path2[j].abs()))?
         };
 
         let possible_scores = [0, -1, -1, score_row_previous[j - 1]];
         score_row_previous.push(amax(&possible_scores) + this_cell_score);
-        let traceback_value = argmax(&possible_scores).try_into().unwrap();
+        let traceback_value = argmax(&possible_scores).try_into().expect("i32 overflow");
         if traceback_value != 0 {
-            traceback_matrix.insert((0, j.try_into().unwrap()), traceback_value);
+            traceback_matrix.insert((0, j.try_into().expect("i32 overflow")), traceback_value);
         }
     }
 
@@ -58,13 +72,13 @@ fn initialize_matrices_lowmem(
         score_row_current.push(0);
     }
 
-    return (
+    return Ok(InitializeMatricesLowmemResult(
         score_row_previous,
         score_row_current,
         traceback_matrix,
         max_score,
         argmax_score,
-    );
+    ));
 }
 
 pub fn align_paths_subproblem_lowmem(
@@ -72,7 +86,7 @@ pub fn align_paths_subproblem_lowmem(
     path2: &[i32],
     segment_lengths: &HashMap<i32, i32>,
     drop: usize,
-) -> align::Alignment {
+) -> Result<align::Alignment, InversionError> {
     debug!(
         "Performing lowmem alignment of {}:{} to {}:{} ({}x{})",
         path1[0],
@@ -82,13 +96,13 @@ pub fn align_paths_subproblem_lowmem(
         path1.len(),
         path2.len(),
     );
-    let (
+    let InitializeMatricesLowmemResult(
         mut score_row_previous,
         mut score_row_current,
         mut traceback_matrix,
         mut max_score,
         mut argmax_score,
-    ) = initialize_matrices_lowmem(&path1, &path2, &segment_lengths);
+    ) = initialize_matrices_lowmem(&path1, &path2, &segment_lengths)?;
 
     let (max_row_drop, max_col_drop) = if path1.len() > path2.len() {
         //(min(drop + path1.len() - path2.len(), drop * 5), drop)
@@ -101,21 +115,29 @@ pub fn align_paths_subproblem_lowmem(
     for i in 1..path1.len() {
         // fill in first column of this row
         let this_cell_score = if path1[i] == path2[0] {
-            *segment_lengths.get(&path1[i].abs()).unwrap()
+            *segment_lengths
+                .get(&path1[i].abs())
+                .ok_or(InversionError::SegmentNotFound(path1[i]))?
         } else {
-            -1 * *segment_lengths.get(&path1[i].abs()).unwrap()
+            -1 * *segment_lengths
+                .get(&path1[i].abs())
+                .ok_or(InversionError::SegmentNotFound(path1[i]))?
         };
         let possible_scores = [0, -1, score_row_previous[0], -1];
         score_row_current[0] = amax(&possible_scores) + this_cell_score;
-        let traceback_value = argmax(&possible_scores).try_into().unwrap();
+        let traceback_value = argmax(&possible_scores).try_into().expect("i32 overflow");
         if traceback_value != 0 {
-            traceback_matrix.insert((i.try_into().unwrap(), 0), traceback_value);
+            traceback_matrix.insert((i.try_into().expect("i32 overflow"), 0), traceback_value);
         }
 
         // fill in the rest of this row
-        let len_i = *segment_lengths.get(&path1[i].abs()).unwrap();
+        let len_i = *segment_lengths
+            .get(&path1[i].abs())
+            .ok_or(InversionError::SegmentNotFound(path1[i]))?;
         for j in 1..path2.len() {
-            let len_j = *segment_lengths.get(&path2[j].abs()).unwrap();
+            let len_j = *segment_lengths
+                .get(&path2[j].abs())
+                .ok_or(InversionError::SegmentNotFound(path2[j]))?;
 
             // heuristic: if we are too far from diagonal, leave traceback as implicit 0 and
             // calculate score as if we are starting alignment here regardless of what is in
@@ -144,10 +166,13 @@ pub fn align_paths_subproblem_lowmem(
                 };
 
                 score_row_current[j] = amax(&possible_scores);
-                let traceback_value = argmax(&possible_scores).try_into().unwrap();
+                let traceback_value = argmax(&possible_scores).try_into().expect("i32 overflow");
                 if traceback_value != 0 {
                     traceback_matrix.insert(
-                        (i.try_into().unwrap(), j.try_into().unwrap()),
+                        (
+                            i.try_into().expect("i32 overflow"),
+                            j.try_into().expect("i32 overflow"),
+                        ),
                         traceback_value,
                     );
                 }
@@ -157,7 +182,7 @@ pub fn align_paths_subproblem_lowmem(
         let (row_max, row_argmax) = max_and_argmax(&score_row_current);
         if row_max > max_score {
             max_score = row_max;
-            argmax_score = (i.try_into().unwrap(), row_argmax);
+            argmax_score = (i.try_into().expect("i32 overflow"), row_argmax);
         }
         // now, switch rows. Not beautiful but faster than reallocating memory
         let score_row_tmp = score_row_previous;
@@ -170,7 +195,7 @@ pub fn align_paths_subproblem_lowmem(
         traceback.alignment_path1.len(),
         traceback.alignment_path2.len()
     );
-    return traceback;
+    return Ok(traceback);
 }
 
 fn traceback_lowmem(
@@ -238,7 +263,8 @@ mod tests {
             );
         }
         //let (path1_alignment, path2_alignment, path1_start_index, path1_end_index) =
-        let alignment = align_paths_subproblem_lowmem(&path1, &path2, &segment_lengths, 100);
+        let alignment =
+            align_paths_subproblem_lowmem(&path1, &path2, &segment_lengths, 100).unwrap();
         assert_eq!(alignment.alignment_path1, vec![2, 3, 4, -5]);
         assert_eq!(alignment.alignment_path2, vec![2, 7, -5]);
         assert_eq!(alignment.path1_start_index, 0);

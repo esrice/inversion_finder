@@ -2,7 +2,7 @@ use std::{collections::HashMap, error::Error};
 
 use log::info;
 
-use crate::{align, gfa};
+use crate::{InversionError, align, gfa};
 
 pub struct AlignmentOptions {
     pub max_highmem_path_length: usize,
@@ -33,12 +33,12 @@ pub fn align_all_queries(
     paths_to_exclude: &[&str],
     ref_path_key: &str,
     alignment_options: AlignmentOptions,
-) -> Result<(Vec<(String, i32, i32)>, Vec<String>), Box<dyn Error>> {
+) -> Result<(Vec<(String, i32, i32)>, Vec<String>), InversionError> {
     let mut query_path_keys = Vec::<String>::new();
     let mut inversions = Vec::<(String, i32, i32)>::new();
     let ref_path = paths
         .get(ref_path_key)
-        .ok_or(format!("Cannot find path with name {}", ref_path_key))?
+        .ok_or(InversionError::PathNotFound(ref_path_key.to_string()))?
         .clone();
 
     for query_path_key in path_names {
@@ -50,7 +50,7 @@ pub fn align_all_queries(
             info!("Starting alignment of path {}", query_path_key);
             let query_path = paths
                 .get(query_path_key)
-                .ok_or(format!("Cannot find path with name {}", query_path_key))?;
+                .ok_or(InversionError::PathNotFound(query_path_key.to_string()))?;
             query_path_keys.push(query_path_key.clone());
             let alignments = align::align_paths(
                 &ref_path,
@@ -59,7 +59,7 @@ pub fn align_all_queries(
                 alignment_options.max_highmem_path_length,
                 alignment_options.max_lowmem_drop,
                 alignment_options.max_path_length,
-            );
+            )?;
 
             // make a list of segments that we need to find the positions of
             let mut segments_to_lookup = Vec::new();

@@ -34,12 +34,20 @@ pub fn argmax(a: &[i32]) -> i32 {
 #[derive(Debug)]
 pub enum InversionError {
     GfaParse(String),
+    SegmentNotFound(i32),
+    PathNotFound(String),
 }
 
 impl fmt::Display for InversionError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             InversionError::GfaParse(e) => write!(f, "Error parsing GFA: {}", e),
+            InversionError::SegmentNotFound(segment_id) => {
+                write!(f, "Cannot find S-line in GFA for segment {}", segment_id)
+            }
+            InversionError::PathNotFound(path_id) => {
+                write!(f, "Cannot find P-line in GFA for path {}", path_id)
+            }
         }
     }
 }

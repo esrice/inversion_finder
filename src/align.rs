@@ -2,6 +2,8 @@ use ndarray::{Array, Array2};
 use ndarray_stats::QuantileExt;
 use std::collections::{HashMap, HashSet};
 
+use crate::InversionError;
+
 use super::{amax, argmax, lowmem};
 
 pub struct Alignment {
@@ -35,45 +37,63 @@ fn create_matrices(
     path1: &[i32],
     path2: &[i32],
     segment_lengths: &HashMap<i32, i32>,
-) -> (Array2<i32>, Array2<i8>) {
+) -> Result<(Array2<i32>, Array2<i8>), InversionError> {
     let mut score_matrix: Array2<i32> = Array::zeros((path1.len(), path2.len()));
     let mut traceback_matrix: Array2<i8> = Array::zeros((path1.len(), path2.len()));
 
     // fill in the corner
     score_matrix[[0, 0]] = if path1[0] == path2[0] {
-        *segment_lengths.get(&path1[0].abs()).unwrap()
+        *segment_lengths
+            .get(&path1[0].abs())
+            .ok_or(InversionError::SegmentNotFound(path1[0].abs()))?
     } else {
-        -1 * (*segment_lengths.get(&path1[0].abs()).unwrap()
-            + *segment_lengths.get(&path2[0].abs()).unwrap())
+        -1 * (*segment_lengths
+            .get(&path1[0].abs())
+            .ok_or(InversionError::SegmentNotFound(path1[0].abs()))?
+            + *segment_lengths
+                .get(&path2[0].abs())
+                .ok_or(InversionError::SegmentNotFound(path2[0].abs()))?)
     };
 
     // fill in the first column
     for i in 1..path1.len() {
         let this_cell_score = if path1[i] == path2[0] {
-            *segment_lengths.get(&path1[i].abs()).unwrap()
+            *segment_lengths
+                .get(&path1[i].abs())
+                .ok_or(InversionError::SegmentNotFound(path1[i].abs()))?
         } else {
-            -1 * *segment_lengths.get(&path1[i].abs()).unwrap()
+            -1 * *segment_lengths
+                .get(&path1[i].abs())
+                .ok_or(InversionError::SegmentNotFound(path1[i].abs()))?
         };
 
         let possible_scores = [0, -1, score_matrix[[i - 1, 0]], -1];
         score_matrix[[i, 0]] = amax(&possible_scores) + this_cell_score;
-        traceback_matrix[[i, 0]] = argmax(&possible_scores).try_into().unwrap();
+        traceback_matrix[[i, 0]] = argmax(&possible_scores)
+            .try_into()
+            .expect("Traceback values must be >=0");
     }
 
     // fill in the first row
     for j in 1..path2.len() {
         let this_cell_score = if path2[j] == path1[0] {
-            *segment_lengths.get(&path2[j].abs()).unwrap()
+            *segment_lengths
+                .get(&path2[j].abs())
+                .ok_or(InversionError::SegmentNotFound(path2[j].abs()))?
         } else {
-            -1 * *segment_lengths.get(&path2[j].abs()).unwrap()
+            -1 * *segment_lengths
+                .get(&path2[j].abs())
+                .ok_or(InversionError::SegmentNotFound(path2[j].abs()))?
         };
 
         let possible_scores = [0, -1, -1, score_matrix[[0, j - 1]]];
         score_matrix[[0, j]] = amax(&possible_scores) + this_cell_score;
-        traceback_matrix[[0, j]] = argmax(&possible_scores).try_into().unwrap();
+        traceback_matrix[[0, j]] = argmax(&possible_scores)
+            .try_into()
+            .expect("Traceback values must be >=0");
     }
 
-    return (score_matrix, traceback_matrix);
+    return Ok((score_matrix, traceback_matrix));
 }
 
 /// Perform an alignment subproblem.
@@ -95,14 +115,18 @@ fn align_paths_subproblem(
     path1: &[i32],
     path2: &[i32],
     segment_lengths: &HashMap<i32, i32>,
-) -> Alignment {
+) -> Result<Alignment, InversionError> {
     let (mut score_matrix, mut traceback_matrix) =
-        create_matrices(&path1, &path2, &segment_lengths);
+        create_matrices(&path1, &path2, &segment_lengths)?;
 
     for i in 1..path1.len() {
-        let len_i = *segment_lengths.get(&path1[i].abs()).unwrap();
+        let len_i = *segment_lengths
+            .get(&path1[i].abs())
+            .ok_or(InversionError::SegmentNotFound(path1[i].abs()))?;
         for j in 1..path2.len() {
-            let len_j = *segment_lengths.get(&path2[j].abs()).unwrap();
+            let len_j = *segment_lengths
+                .get(&path2[j].abs())
+                .ok_or(InversionError::SegmentNotFound(path2[j]))?;
             let possible_scores = if path1[i] == path2[j] {
                 [
                     len_i,
@@ -120,10 +144,12 @@ fn align_paths_subproblem(
             };
 
             score_matrix[[i, j]] = amax(&possible_scores);
-            traceback_matrix[[i, j]] = argmax(&possible_scores).try_into().unwrap();
+            traceback_matrix[[i, j]] = argmax(&possible_scores)
+                .try_into()
+                .expect("Traceback values must be >=0");
         }
     }
-    return traceback(&path1, &path2, &score_matrix, &traceback_matrix);
+    return Ok(traceback(&path1, &path2, &score_matrix, &traceback_matrix));
 }
 
 fn traceback(
@@ -164,8 +190,8 @@ fn traceback(
     return Alignment {
         alignment_path1,
         alignment_path2,
-        path1_start_index: path1_start_index.try_into().unwrap(),
-        path1_end_index: path1_end_index.try_into().unwrap(),
+        path1_start_index: path1_start_index.try_into().expect("i32 overflow"),
+        path1_end_index: path1_end_index.try_into().expect("i32 overflow"),
     };
 }
 
@@ -176,7 +202,7 @@ pub fn align_paths(
     max_highmem_length: usize,
     max_lowmem_drop: usize,
     max_path_length: usize,
-) -> Vec<Alignment> {
+) -> Result<Vec<Alignment>, InversionError> {
     // reverse-complemented version of path2
     let path2_rev: Vec<i32> = path2.iter().map(|x| -1 * x).rev().collect();
     let path1_set = HashSet::<_>::from_iter(path1.iter().cloned());
@@ -228,7 +254,7 @@ pub fn align_paths(
                     path1_subproblem,
                     path2_subproblem,
                     segment_lengths,
-                ))
+                )?)
             } else if path1_subproblem.len() < max_path_length
                 && path2_subproblem.len() < max_path_length
             {
@@ -237,7 +263,7 @@ pub fn align_paths(
                     path2_subproblem,
                     segment_lengths,
                     max_lowmem_drop,
-                ))
+                )?)
             } else {
                 None
             };
@@ -264,7 +290,7 @@ pub fn align_paths(
         }
     }
 
-    return alignments;
+    return Ok(alignments);
 }
 
 #[cfg(test)]
@@ -278,7 +304,8 @@ mod tests {
         let path2 = vec![2, 7, -5];
         let segment_lengths: HashMap<i32, i32> =
             HashMap::from([(2, 100), (3, 10), (4, 10), (5, 100), (7, 10)]);
-        let (score_matrix, traceback_matrix) = create_matrices(&path1, &path2, &segment_lengths);
+        let (score_matrix, traceback_matrix) =
+            create_matrices(&path1, &path2, &segment_lengths).unwrap();
         assert_eq!(
             score_matrix,
             array![[100, 90, -10], [90, 0, 0], [80, 0, 0], [-20, 0, 0]]
@@ -308,7 +335,7 @@ mod tests {
             );
         }
         //let (path1_alignment, path2_alignment, path1_start_index, path1_end_index) =
-        let alignment = align_paths_subproblem(&path1, &path2, &segment_lengths);
+        let alignment = align_paths_subproblem(&path1, &path2, &segment_lengths).unwrap();
         assert_eq!(alignment.alignment_path1, vec![2, 3, 4, -5]);
         assert_eq!(alignment.alignment_path2, vec![2, 7, -5]);
         assert_eq!(alignment.path1_start_index, 0);
@@ -333,7 +360,8 @@ mod tests {
             );
         }
 
-        let alignments1 = align_paths(&path1, &path2, &segment_lengths, 10000, 1000, 100000);
+        let alignments1 =
+            align_paths(&path1, &path2, &segment_lengths, 10000, 1000, 100000).unwrap();
         assert_eq!(alignments1[0].alignment_path1, vec![2, 3, 4, 5]);
         assert_eq!(alignments1[0].alignment_path2, vec![-5, -7, -2]);
         assert_eq!(alignments1[0].path1_start_index, 1);
@@ -341,7 +369,8 @@ mod tests {
 
         let path3 = vec![1, 2, 3, 4, 5, 6, 7];
         let path4 = vec![1, -3, -2, 4, -6, -5, 7];
-        let alignments2 = align_paths(&path3, &path4, &segment_lengths, 10000, 1000, 100000);
+        let alignments2 =
+            align_paths(&path3, &path4, &segment_lengths, 10000, 1000, 100000).unwrap();
         assert_eq!(alignments2[0].alignment_path1, vec![2, 3]);
         assert_eq!(alignments2[0].alignment_path2, vec![-3, -2]);
         assert_eq!(alignments2[0].path1_start_index, 1);
@@ -353,7 +382,8 @@ mod tests {
 
         let path5 = vec![1, 2, 3, 4, 5, 6, 7];
         let path6 = vec![1, -3, -2, 8, -6, -5, 7];
-        let alignments3 = align_paths(&path5, &path6, &segment_lengths, 10000, 1000, 100000);
+        let alignments3 =
+            align_paths(&path5, &path6, &segment_lengths, 10000, 1000, 100000).unwrap();
         assert_eq!(alignments3[0].alignment_path1, vec![2, 3]);
         assert_eq!(alignments3[0].alignment_path2, vec![-3, -2]);
         assert_eq!(alignments3[0].path1_start_index, 1);

@@ -158,10 +158,7 @@ pub fn lookup_base_positions(
     for (i, segment) in path.iter().map(|s| s.abs()).enumerate() {
         let this_segment_length = segment_lengths
             .get(&segment)
-            .ok_or(InversionError::GfaParse(format!(
-                "Cannot find S-line in GFA for segment {}",
-                segment
-            )))?;
+            .ok_or(InversionError::SegmentNotFound(segment))?;
         if segment_indices_set.contains(&i.try_into().expect("i32 overflow")) {
             segment_positions.insert(
                 i.try_into().expect("i32 overflow"),
