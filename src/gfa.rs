@@ -1,9 +1,10 @@
 use regex::Regex;
 use std::collections::{HashMap, HashSet};
-use std::error::Error;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
+
+use crate::InversionError;
 
 /// Parse the path part of a GFA P-line.
 ///
@@ -23,36 +24,34 @@ use std::path::PathBuf;
 ///
 /// assert_eq!(gfa::parse_gfa_path("1-,2+,3-,235+").unwrap(), vec![-1, 2, -3, 235]);
 /// ```
-pub fn parse_gfa_path(path_string: &str) -> Result<Vec<i32>, Box<dyn Error>> {
+pub fn parse_gfa_path(path_string: &str) -> Result<Vec<i32>, InversionError> {
     let re = Regex::new(r"(\d+)([+-])").unwrap();
     let mut path_list: Vec<i32> = Vec::new();
     for segment in path_string.split(",") {
-        let caps = re
-            .captures(segment)
-            .ok_or(format!("Invalid segment format '{}'", segment))?;
+        let caps = re.captures(segment).ok_or(make_segment_error(segment))?;
         path_list.push(
-            match caps
-                .get(2)
-                .ok_or(format!("Invalid segment format '{}'", segment))?
-                .as_str()
-            {
+            match caps.get(2).ok_or(make_segment_error(segment))?.as_str() {
                 "+" => caps
                     .get(1)
-                    .ok_or(format!("Invalid segment format '{}'", segment))?
-                    .as_str()
-                    .parse::<i32>()?,
+                    .map(|segment_id| segment_id.as_str().parse::<i32>())
+                    .ok_or(make_segment_error(segment))?
+                    .map_err(|_| make_segment_error(segment))?,
                 "-" => {
                     -1 * caps
                         .get(1)
-                        .ok_or(format!("Invalid segment format '{}'", segment))?
-                        .as_str()
-                        .parse::<i32>()?
+                        .map(|segment_id| segment_id.as_str().parse::<i32>())
+                        .ok_or(make_segment_error(segment))?
+                        .map_err(|_| make_segment_error(segment))?
                 }
-                _ => return Err(format!("Invalid segment format '{}'", segment).into()),
+                _ => return Err(make_segment_error(segment)),
             },
         )
     }
     return Ok(path_list);
+}
+
+fn make_segment_error(segment: &str) -> InversionError {
+    InversionError::GfaParse(format!("Invalid segment format '{}'", segment))
 }
 
 /// Read a GFA into memory.
@@ -70,26 +69,50 @@ pub fn parse_gfa_path(path_string: &str) -> Result<Vec<i32>, Box<dyn Error>> {
 ///   nondeterministic order that stuff comes out of the HashMap to be disturbing
 pub fn read_gfa(
     path: PathBuf,
-) -> Result<(HashMap<i32, i32>, HashMap<String, Vec<i32>>, Vec<String>), Box<dyn Error>> {
-    let file = match File::open(&path) {
-        Err(why) => panic!("couldn't open {}: {}", path.display(), why),
-        Ok(file) => file,
-    };
+) -> Result<(HashMap<i32, i32>, HashMap<String, Vec<i32>>, Vec<String>), InversionError> {
+    let file = File::open(&path).map_err(|err| {
+        InversionError::GfaParse(format!("Couldn't open GFA at {}: {}", path.display(), err))
+    })?;
     let reader = BufReader::new(file);
 
     let mut segment_lengths: HashMap<i32, i32> = HashMap::new();
     let mut paths = HashMap::new();
     let mut path_names = Vec::new();
 
-    for line_result in reader.lines() {
-        let line = line_result?;
+    for (i, line_result) in reader.lines().enumerate() {
+        let line = line_result
+            .map_err(|err| InversionError::GfaParse(format!("Reading error: {}", err)))?;
         let fields: Vec<&str> = line.split("\t").collect();
 
-        if fields[0] == "S" {
-            segment_lengths.insert(fields[1].to_string().parse()?, fields[2].len().try_into()?);
-        } else if fields[0] == "P" {
-            paths.insert(fields[1].to_string(), parse_gfa_path(fields[2])?);
-            path_names.push(fields[1].to_string());
+        match fields[0] {
+            "S" => {
+                segment_lengths.insert(
+                    fields[1].to_string().parse().map_err(|_| {
+                        InversionError::GfaParse(format!(
+                            concat!(
+                                "Segment IDs must be integers, ",
+                                "but ID '{}' on line {} is not an integer."
+                            ),
+                            fields[1],
+                            i + 1
+                        ))
+                    })?,
+                    fields[2]
+                        .len()
+                        .try_into()
+                        .expect("Segment longer than max i64???"),
+                );
+            }
+            "P" => {
+                paths.insert(
+                    fields[1].to_string(),
+                    parse_gfa_path(fields[2]).map_err(|err| {
+                        InversionError::GfaParse(format!("{} (line {})", err, i + 1))
+                    })?,
+                );
+                path_names.push(fields[1].to_string());
+            }
+            _ => {}
         }
     }
 
@@ -127,7 +150,7 @@ pub fn lookup_base_positions(
     path: &[i32],
     segment_lengths: &HashMap<i32, i32>,
     segment_indices: &[i32],
-) -> Result<HashMap<i32, (i32, i32)>, Box<dyn Error>> {
+) -> Result<HashMap<i32, (i32, i32)>, InversionError> {
     let segment_indices_set = HashSet::<i32>::from_iter(segment_indices.iter().cloned());
     let mut segment_positions: HashMap<i32, (i32, i32)> = HashMap::new();
 
@@ -135,10 +158,13 @@ pub fn lookup_base_positions(
     for (i, segment) in path.iter().map(|s| s.abs()).enumerate() {
         let this_segment_length = segment_lengths
             .get(&segment)
-            .ok_or(format!("Cannot find segment {}", segment))?;
-        if segment_indices_set.contains(&i.try_into()?) {
+            .ok_or(InversionError::GfaParse(format!(
+                "Cannot find S-line in GFA for segment {}",
+                segment
+            )))?;
+        if segment_indices_set.contains(&i.try_into().expect("i32 overflow")) {
             segment_positions.insert(
-                i.try_into()?,
+                i.try_into().expect("i32 overflow"),
                 (current_position + 1, current_position + this_segment_length),
             );
         }

@@ -1,3 +1,5 @@
+use std::{error, fmt};
+
 pub mod align;
 pub mod alignment_interface;
 pub mod gfa;
@@ -28,3 +30,18 @@ pub fn argmax(a: &[i32]) -> i32 {
         .try_into()
         .unwrap()
 }
+
+#[derive(Debug)]
+pub enum InversionError {
+    GfaParse(String),
+}
+
+impl fmt::Display for InversionError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            InversionError::GfaParse(e) => write!(f, "Error parsing GFA: {}", e),
+        }
+    }
+}
+
+impl error::Error for InversionError {}
